@@ -1,0 +1,47 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# ── Machine Learning & Data ──────────────────────────────────
+# Model artefacts are large binary files (>100 MB) — train locally.
+# Run: python finshield/ml_model.py
+*.pkl
+*.joblib
+models/
+data/
+*.csv
+*.db
+
+# ── Environment & Secrets ────────────────────────────────────
+# NEVER commit .env — it contains your DB password.
+# Copy .env.example → .env and fill in your values.
+.env
+.env.local
+
+# ── Node / React ─────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.npm/
+.dist/
+
+# ── Generated output files ───────────────────────────────────
+metrics_output.txt
+
+# ── Archives ─────────────────────────────────────────────────
+*.zip
+*.tar.gz
+
+# ── IDE / OS ─────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
