@@ -1,0 +1,53 @@
+name: Validate FinShield
+on: [push, pull_request]
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: finshield
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DB_HOST: localhost
+      DB_NAME: finshield
+      DB_USER: postgres
+      DB_PASSWORD: ci-only
+      PGPASSWORD: ci-only
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+      - name: Initialize disposable CI database
+        run: psql -h localhost -U postgres -d finshield -v ON_ERROR_STOP=1 -f schema.sql -f finshield/schema_patch_v2.sql
+      - name: Seed, train, and exercise real inference
+        working-directory: finshield
+        run: |
+          python seed_data_v2.py
+          python ml_model.py
+          python ../tests/smoke_inference.py
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm run lint && npm run build
+        working-directory: dashboard

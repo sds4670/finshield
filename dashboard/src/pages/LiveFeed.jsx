@@ -1,39 +1,44 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 export default function LiveFeed() {
   const [rows, setRows]   = useState([])
   const [loading, setLoading] = useState(true)
   const [flash, setFlash] = useState(null)
+  const [error, setError] = useState(null)
   const [stats, setStats] = useState(null)
+  const lastTransaction = useRef(null)
+  const flashTimer = useRef(null)
 
   const fetchStats = useCallback(async () => {
     try {
       const res  = await fetch('http://localhost:8000/api/stats')
+      if (!res.ok) throw new Error(`API returned ${res.status}`)
       const data = await res.json()
       setStats(data)
-    } catch {}
+    } catch { setError("Unable to refresh statistics") }
   }, [])
 
   const fetch_ = useCallback(async () => {
     try {
       const res  = await fetch('http://localhost:8000/api/live-feed')
+      if (!res.ok) throw new Error(`API returned ${res.status}`)
       const data = await res.json()
-      setRows(prev => {
-        if (data.length > 0 && prev[0]?.transaction_id !== data[0]?.transaction_id) {
-          setFlash(data[0]?.transaction_id)
-          setTimeout(() => setFlash(null), 800)
-        }
-        return data
-      })
+      if (data.length > 0 && lastTransaction.current !== data[0].transaction_id) {
+        lastTransaction.current = data[0].transaction_id
+        setFlash(data[0].transaction_id)
+        clearTimeout(flashTimer.current)
+        flashTimer.current = setTimeout(() => setFlash(null), 800)
+      }
+      setRows(data)
+      setError(null)
       setLoading(false)
-    } catch { setLoading(false) }
+    } catch { setError("Unable to refresh stream. Check the API connection."); setLoading(false) }
   }, [])
 
   useEffect(() => {
-    fetch_()
-    fetchStats()
+    const initial = setTimeout(() => { fetch_(); fetchStats(); }, 0)
     const id = setInterval(() => { fetch_(); fetchStats(); }, 3000)
-    return () => clearInterval(id)
+    return () => { clearTimeout(initial); clearInterval(id); clearTimeout(flashTimer.current) }
   }, [fetch_, fetchStats])
 
   if (loading) return <div className="loading">Initializing Stream...</div>
@@ -45,6 +50,8 @@ export default function LiveFeed() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       
+      {error && <p role="alert">{error}</p>}
+      {!error && rows.length === 0 && <p>No transactions yet. Start the processor.</p>}
       {/* Asymmetric KPI Bar */}
       <div className="kpi-bar">
         <div className="kpi-left">

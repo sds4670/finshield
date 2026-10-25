@@ -18,6 +18,7 @@ This generates:
 
 import os
 import json
+import hashlib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,13 +38,10 @@ if hasattr(sys.stdout, 'buffer') and getattr(sys.stdout, 'encoding', '').lower()
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import (
     classification_report, roc_auc_score,
-    precision_recall_curve, average_precision_score,
-    confusion_matrix
+    average_precision_score,
 )
-from sklearn.preprocessing import LabelEncoder
 
 DB_CONFIG = {
     "host":     os.getenv("DB_HOST", "localhost"),
@@ -53,7 +51,7 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", "")
 }
 
-MODEL_DIR = "models"
+MODEL_DIR = os.getenv("FINSHIELD_MODEL_DIR", os.path.join(os.path.dirname(__file__), "models"))
 MODEL_PATH = os.path.join(MODEL_DIR, "fraud_model_xgb_v1.pkl")
 FEATURES_PATH = os.path.join(MODEL_DIR, "feature_names.pkl")
 METRICS_PATH = os.path.join(MODEL_DIR, "model_metrics.json")
@@ -79,7 +77,8 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     and merchant_fraud_rate encode the actual signal.
     """
 
-    features = pd.DataFrame()
+    df = df.copy()
+    features = pd.DataFrame(index=df.index)
     
     # Cast Decimal types from DB to float for numpy operations
     for col in ['amount', 'avg_txn_amount', 'std_txn_amount', 'fraud_rate']:
@@ -202,6 +201,7 @@ def load_training_data(conn) -> pd.DataFrame:
     query = """
         SELECT
             t.transaction_id,
+            t.created_at,
             t.amount,
             t.hour_of_day,
             t.day_of_week,
@@ -238,16 +238,11 @@ def load_training_data(conn) -> pd.DataFrame:
 
 
 def create_labels(df: pd.DataFrame) -> pd.Series:
-    """
-    Creates binary fraud label from transaction status.
+    """Create proxy labels for the synthetic demo, NOT verified fraud outcomes.
 
-    APPROVED → 0 (legitimate)
-    FLAGGED  → 1 (fraud)
-    BLOCKED  → 1 (fraud)
-
-    Why combine FLAGGED and BLOCKED as fraud=1?
-    Both represent transactions the system determined were fraudulent.
-    The distinction (flagged vs blocked) is about severity, not label.
+    FLAGGED/BLOCKED are policy decisions. Training on them reproduces the
+    policy and cannot establish detection quality on independent fraud labels.
+    Use benchmark.py for externally labeled evaluation.
     """
     return df['status'].apply(lambda s: 0 if s == 'APPROVED' else 1)
 
@@ -287,17 +282,18 @@ class FraudModelTrainer:
         print(f"  Class distribution: {legit_count} legitimate, {fraud_count} fraud")
         print(f"  Fraud rate: {fraud_count/len(y)*100:.1f}%")
 
-        # Train/test split — stratified to preserve fraud ratio in both sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            test_size=0.2,
-            random_state=42,
-            stratify=y   # ensures fraud % is same in train and test
-        )
-        print(f"  Train: {len(X_train)} rows | Test: {len(X_test)} rows")
+        # Chronological demo evaluation; current context joins are not
+        # point-in-time snapshots, so these remain demo-only metrics.
+        cutoff = df['created_at'].sort_values().iloc[int(len(df) * .8)]
+        training = df['created_at'] < cutoff
+        X_train, X_test = X.loc[training], X.loc[~training]
+        y_train, y_test = y.loc[training], y.loc[~training]
+        if y_train.nunique() != 2 or y_test.nunique() != 2:
+            raise ValueError("Both temporal partitions need both proxy-label classes")
+        print("WARNING: synthetic policy labels; not independent fraud evaluation")
 
         # ---- XGBoost Configuration ----
-        scale_pos_weight = legit_count / max(fraud_count, 1)
+        scale_pos_weight = float((y_train == 0).sum() / y_train.sum())
         # This is the key imbalance fix — tells XGBoost to weight fraud
         # samples more heavily during training
 
@@ -309,7 +305,7 @@ class FraudModelTrainer:
             max_depth=5,
             # Maximum depth of each tree
             # Shallow trees (3-4) = underfits, too deep (8+) = overfits
-            # 5 is the sweet spot for fraud detection on tabular data
+            # Fixed demo configuration; depth should be validated on independent labels
 
             learning_rate=0.05,
             # How much each tree corrects the previous one
@@ -325,7 +321,7 @@ class FraudModelTrainer:
             # Forces trees to find different patterns = better ensemble
 
             scale_pos_weight=scale_pos_weight,
-            # THE key parameter for imbalanced data
+            # One candidate approach for class imbalance
             # Multiplies the loss for fraud samples
 
             min_child_weight=5,
@@ -350,6 +346,7 @@ class FraudModelTrainer:
             # Better than AUC-ROC for imbalanced datasets
             # PR-AUC focuses on the minority (fraud) class performance
 
+            n_jobs=2,
             random_state=42,
             use_label_encoder=False
         )
@@ -357,7 +354,7 @@ class FraudModelTrainer:
         print("\n🚀 Training XGBoost model...")
         self.model.fit(
             X_train, y_train,
-            eval_set=[(X_test, y_test)],
+            eval_set=[(X_train, y_train)],
             verbose=50   # print progress every 50 trees
         )
 
@@ -422,6 +419,8 @@ class FraudModelTrainer:
 
         # Save metrics
         metrics = {
+            'evaluation_scope': 'synthetic policy imitation; current-context joins; not independently labeled fraud',
+            'split': 'chronological 80/20',
             'roc_auc':   round(float(roc_auc), 4),
             'pr_auc':    round(float(pr_auc), 4),
             'top_features': [
@@ -446,10 +445,8 @@ class FraudModelScorer:
     Designed to be instantiated ONCE when the pipeline starts,
     then called repeatedly for each transaction.
 
-    Why load once?
-    Loading a model from disk takes ~100ms. If you loaded it per
-    transaction, your pipeline would be 100ms slower per transaction.
-    Keeping it in memory makes inference < 1ms.
+    Load once to avoid repeated deserialization. Latency must be measured;
+    no production inference-time claim is made.
     """
 
     def __init__(self):
@@ -464,6 +461,8 @@ class FraudModelScorer:
                 f"Model not found at {MODEL_PATH}. "
                 f"Run: python ml_model.py to train first."
             )
+        with open(MODEL_PATH, 'rb') as artifact:
+            self.artifact_sha256 = hashlib.file_digest(artifact, 'sha256').hexdigest()
         self.model        = joblib.load(MODEL_PATH)
         self.explainer    = joblib.load(EXPLAINER_PATH)
         self.feature_names = joblib.load(FEATURES_PATH)
@@ -517,7 +516,10 @@ class FraudModelScorer:
             'ml_score':        round(fraud_proba, 4),
             'ml_decision':     decision,
             'top_explanations': top_explanations,
-            'model_version':   'xgb_v1.0'
+            'model_version':   'xgb_v1.0',
+            'artifact_sha256': self.artifact_sha256,
+            'explanation_units': 'log_odds',
+            'evaluation_scope': 'synthetic policy imitation; score is not a calibrated fraud probability'
         }
 
 
@@ -532,14 +534,11 @@ def make_final_decision(rule_result: dict, ml_result: dict) -> dict:
 
     Decision hierarchy:
     1. If rule engine hard-blocked → BLOCKED (ML output ignored)
-    2. If rule engine didn't send to ML → use rule decision as-is
-    3. If both agree → use that decision
-    4. If they disagree → weighted combination, ML gets more weight
+    2. Otherwise combine supplied scores using heuristic 35/65 weights.
+    Routing transactions around ML is the processor's responsibility.
 
-    Why does ML get more weight in disagreement?
-    Rules are deterministic and can be wrong in edge cases.
-    ML has learned from thousands of examples and understands
-    subtle patterns rules can't express.
+    The 35/65 weights and thresholds are unvalidated demo policy choices.
+    Training on policy-generated labels does not justify preferring ML.
     """
     # Rule engine made a hard decision
     if rule_result.get('hard_blocked'):
@@ -556,7 +555,7 @@ def make_final_decision(rule_result: dict, ml_result: dict) -> dict:
     ml_score   = ml_result.get('ml_score', rule_score)
 
     # Weighted combination: 35% rule engine, 65% ML
-    # Why 65% ML? Because ML learned from data — rules are heuristics.
+    # Demo policy choice; weights require independent validation before use.
     combined_score = (0.35 * rule_score) + (0.65 * ml_score)
 
     if combined_score >= 0.70:

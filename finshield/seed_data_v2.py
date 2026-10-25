@@ -31,6 +31,7 @@ from fraud_scoring import (
 
 fake = Faker('en_IN')
 random.seed(42)
+Faker.seed(42)
 
 DB_CONFIG = {
     "host":     os.getenv("DB_HOST", "localhost"),
@@ -167,8 +168,8 @@ def seed_transactions(conn, n=2000):
         user_ctx = UserContext(
             user_id=user_id,
             account_age_days=db_user[1],
-            avg_txn_amount=db_user[2],
-            std_txn_amount=db_user[3],
+            avg_txn_amount=float(db_user[2]),
+            std_txn_amount=float(db_user[3]),
             total_txns=db_user[4],
             risk_tier=db_user[5],
             known_device_types=random.sample(
@@ -334,7 +335,7 @@ if __name__ == "__main__":
     # First run the test to confirm scoring works
     print("Running scoring sanity check...")
     import subprocess
-    subprocess.run(["python", "fraud_scoring.py"])
+    subprocess.run([sys.executable, "fraud_scoring.py"], check=True)
     print("\n" + "="*50 + "\n")
 
     conn = get_connection()

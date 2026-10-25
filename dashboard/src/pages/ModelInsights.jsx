@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts'
-import { Cpu, Target, Eye, AlertOctagon } from 'lucide-react'
+import { Cpu, Target, Eye } from 'lucide-react'
 
 const COLORS = ['#8B9B88', '#D07B65', '#C48793', '#7288A2', '#A29587']
 

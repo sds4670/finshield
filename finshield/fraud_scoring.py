@@ -551,7 +551,7 @@ if __name__ == "__main__":
         print(f"   Score:     {result['score']} (threshold: {result['threshold']})")
         print(f"   Decision:  {result['decision']}")
         print(f"   Reason:    {result['reason']}")
-        print(f"   Z-score:   {result['z_score']} → amount_risk: {result['amount_risk']}")
-        print(f"   Velocity:  {result['velocity_risk']}")
-        if result['interactions']:
+        print(f"   Z-score:   {result.get('z_score', 'N/A (hard block)')} → amount_risk: {result.get('amount_risk', 'N/A')}")
+        print(f"   Velocity:  {result.get('velocity_risk', 'N/A')}")
+        if result.get('interactions'):
             print(f"   Boosts:    {result['interactions']}")

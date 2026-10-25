@@ -1,3 +1,5 @@
+> For current setup, ML benchmarking and limitations, see [README](README.md) and [engineering guide](docs/ENGINEERING_GUIDE.md). Apply schema.sql only to a new/disposable database; it drops tables.
+
 # FinShield — Run Order
 
 Run these steps in order after cloning the repo.
@@ -6,9 +8,9 @@ Run these steps in order after cloning the repo.
 
 ## Step 0 — Prerequisites
 
-- Python 3.10+
+- Python 3.11
 - PostgreSQL 14+ (running locally)
-- Node.js 18+
+- Node.js 24
 
 ---
 
@@ -90,7 +92,7 @@ uvicorn api:app --reload
 
 ```bash
 cd dashboard
-npm install   # first time only
+npm ci   # first time only
 npm run dev
 # Opens http://localhost:5173
 ```

@@ -322,3 +322,51 @@ def model_insights():
         "recent_flagged": recent_flagged,
         "score_by_rule": score_by_rule
     }
+
+
+# Local demo inference. Public deployment requires authentication/rate limiting.
+from functools import lru_cache
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from fastapi import HTTPException
+
+
+class TransactionInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    amount: float = Field(gt=0, le=1e9)
+    hour_of_day: int = Field(ge=0, le=23)
+    day_of_week: int = Field(ge=0, le=6)
+    device_type: Literal['mobile', 'web', 'POS', 'unknown']
+    account_age_days: int = Field(ge=0)
+    avg_txn_amount: float = Field(ge=0)
+    std_txn_amount: float = Field(ge=0)
+    total_txns: int = Field(ge=0)
+    risk_tier: Literal['LOW', 'MEDIUM', 'HIGH']
+    fraud_rate: float = Field(ge=0, le=1)
+    is_blacklisted: bool
+    merchant_age_days: int = Field(ge=0)
+
+
+@lru_cache(maxsize=1)
+def get_scorer():
+    from ml_model import FraudModelScorer
+    return FraudModelScorer()
+
+
+@app.post('/api/predict')
+def predict(transaction: TransactionInput):
+    """ML-only synthetic-demo score and SHAP impacts, not a hybrid decision."""
+    try:
+        scorer = get_scorer()
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail='Model unavailable; run training first')
+    return scorer.score(transaction.model_dump())
+
+
+@app.get('/api/health')
+def health():
+    try:
+        query_one('SELECT 1 AS ready')
+    except psycopg2.Error:
+        raise HTTPException(status_code=503, detail='Database unavailable')
+    return {'status': 'ok', 'database': 'ready'}
