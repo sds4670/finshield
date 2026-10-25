@@ -19,6 +19,59 @@ labeled public-data benchmark result is claimed in this repository yet.
 Read the [engineering and interview guide](docs/ENGINEERING_GUIDE.md) for architecture,
 ML reasoning, alternatives, validation evidence, limitations, and interview answers.
 
+## Measured results
+
+### Synthetic transaction demo
+
+The validation run seeded **200 users, 50 merchants and 2,000 transactions**.
+The demo model used a chronological 80/20 holdout.
+
+| Holdout metric | XGBoost demo model |
+|---|---:|
+| ROC-AUC | 0.9237 |
+| Average precision (AP) | 0.8928 |
+
+**These results measure imitation of synthetic policy-generated labels, not
+performance on independently confirmed fraud.** Current-context database joins
+also remain a historical-feature limitation. Seed data uses current dates, so
+future runs may differ.
+
+### Synthetic benchmark smoke test
+
+A deterministic Gaussian fixture (seed 42) exercised the independent benchmark
+implementation using **1,800 training / 600 validation / 600 test rows**. Each
+model's threshold was selected on validation data with illustrative error costs
+of **FP = 1 and FN = 25**. Candidate selection also used validation cost.
+
+| Held-out test metric | Logistic regression | XGBoost |
+|---|---:|---:|
+| Average precision (AP) | 0.3421 | 0.3510 |
+| Cost per transaction (illustrative units) | 0.4350 | 0.4883 |
+
+**Logistic regression was selected by validation cost.** Its test recall was
+0.9535, false-positive rate was 0.3788, and alert rate was 42%. Higher XGBoost AP
+did not produce a lower cost at its validation-selected threshold. The high alert
+rate also shows why recall alone is insufficient.
+
+This is a synthetic wiring check, **not a public-data fraud benchmark**. The
+complete report records all three baselines, including the prior classifier.
+No independently labeled fraud-performance result is claimed yet.
+
+### Engineering validation
+
+| Local check | Result |
+|---|---|
+| Automated unit suite | 13 tests passed |
+| Fresh database schema, seeding and model training | Passed |
+| Live processor | New transactions persisted; clean interrupt shutdown |
+| API integration | Six read endpoints and real model/SHAP prediction passed |
+| Frontend | `npm ci`, lint and production build passed |
+
+The frontend build retains a large-chunk advisory. These are local validation
+results; hosted CI execution, production latency and availability were not measured.
+See the [engineering report](docs/ENGINEERING_GUIDE.md#10-validation-evidence)
+for the evidence and limitations.
+
 ## Local development
 
 ```bash
